@@ -1,4 +1,11 @@
 # relay.py
+import base64, os
+
+if not os.path.exists("my_session.session"):
+    encoded = os.environ.get("TELEGRAM_SESSION_B64")
+    if encoded:
+        with open("my_session.session", "wb") as f:
+            f.write(base64.b64decode(encoded))
 import os
 import time
 import logging
@@ -12,7 +19,7 @@ load_dotenv()
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 DISCORD_WEBHOOK = os.environ["DISCORD_WEBHOOK"]
-TELEGRAM_CHAT = os.environ["TELEGRAM_CHAT"]
+TELEGRAM_CHAT = os.environ["TELEGRAM_CHANNEL_ID"]
 TARGET_LANG = os.environ.get("TARGET_LANG", "en")
 LIBRE_URL = os.environ.get("LIBRE_URL", "https://libretranslate.com/translate")
 SESSION_FILENAME = os.environ.get("SESSION_FILENAME", "my_session.session")
