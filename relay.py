@@ -38,24 +38,75 @@ def translate_text(text, target="en"):
     except:
         return text
 
-def post_to_discord(content, username="Telegram → Discord"):
+def post_to_discord(content: str, username: str = "Telegram ↠ Discord", file_path: str | None = None):
     try:
-        requests.post(DISCORD_WEBHOOK, json={"content": content, "username": username})
-    except:
-        pass
+        if file_path:
+            # Send message + file (image) in one webhook call
+            with open(file_path, "rb") as f:
+                files = {"file": (os.path.basename(file_path), f)}
+                data = {"content": content, "username": username}
+                r = requests.post(DISCORD_WEBHOOK, data=data, files=files, timeout=20)
+        else:
+            # Normal text-only message
+            payload = {"content": content, "username": username}
+            r = requests.post(DISCORD_WEBHOOK, json=payload, timeout=10)
+
+        r.raise_for_status()
+    except Exception as e:
+        logger.error("Failed to post to Discord: %s", e)
 
 @client.on(events.NewMessage(chats=TELEGRAM_CHAT))
 async def handler(event):
-    sender = await event.get_sender()
-    username = sender.username or sender.first_name or "Unknown"
-    original = event.raw_text or ""
-    if not original.strip():
-        return
+    try:
+        sender = await event.get_sender()
+        username = sender.username or sender.first_name or "Unknown"
 
-    translated = translate_text(original, TARGET_LANG)
-    timestamp = datetime.utcfromtimestamp(event.date.timestamp()).strftime("%Y-%m-%d %H:%M UTC")
-    msg = f"**{username}** at {timestamp}:\n{translated}\n\n*(original: {original})*"
-    post_to_discord(msg, username=f"TG: {username}")
+        media_path = None
+        original_text = ""
+
+        # 1) Check if there is media (photo, document, etc.)
+        if event.message.media:
+            # Download to a temporary file inside the container
+            media_path = await event.message.download_media()
+            logger.info("Downloaded media to %s", media_path)
+
+        # 2) Get text (normal message or caption)
+        original_text = event.raw_text or (event.message.message or "")
+
+        # If literally no text and no media, ignore (e.g. pure sticker, etc.)
+        if not original_text.strip() and not media_path:
+            return
+
+        # 3) Translate if there's text
+        translated_text = ""
+        if original_text.strip():
+            translated_text = translate_text(original_text, TARGET_LANG)
+
+        # 4) Build Discord message
+        from datetime import datetime
+        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        if translated_text:
+            content = f"**{username}** at {timestamp}:\n{translated_text}\n\n*(original: {original_text})*"
+        else:
+            # Image only, no text
+            content = f"**{username}** at {timestamp} sent an image."
+
+        logger.info("Relaying message from %s (media=%s)", username, bool(media_path))
+
+        # 5) Send to Discord (with or without file)
+        post_to_discord(content, username=f"TG: {username}", file_path=media_path)
+
+    except Exception as e:
+        logger.exception("Error handling message: %s", e)
+    finally:
+        # 6) Cleanup temp file if we downloaded one
+        if media_path:
+            try:
+                os.remove(media_path)
+                logger.info("Deleted temp media file %s", media_path)
+            except Exception as cleanup_err:
+                logger.warning("Failed to delete temp media file %s: %s", media_path, cleanup_err)
 
 def main():
     logger.info("Relay running...")
