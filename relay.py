@@ -29,13 +29,33 @@ logger = logging.getLogger("relay")
 
 client = TelegramClient(SESSION_FILENAME.replace(".session", ""), API_ID, API_HASH)
 
-def translate_text(text, target="en"):
+def translate_text(text: str, target_lang: str = "en") -> str:
+    text = text.strip()
+    if not text:
+        return text
+
     try:
-        payload = {"q": text, "source": "auto", "target": target, "format": "text"}
-        resp = requests.post(LIBRE_URL, json=payload, timeout=10)
+        resp = requests.post(
+            TRANSLATE_URL,
+            json={
+                "q": text,
+                "source": "auto",      # auto-detect source language
+                "target": target_lang,
+                "format": "text",
+            },
+            timeout=10,
+        )
         resp.raise_for_status()
-        return resp.json().get("translatedText", text)
-    except:
+        data = resp.json()
+        translated = data.get("translatedText")
+
+        if not translated:
+            logger.warning("Translation API returned no translatedText: %s", data)
+            return text
+
+        return translated
+    except Exception as e:
+        logger.warning("Translation failed, returning original. Error: %s", e)
         return text
 
 def post_to_discord(content: str, username: str = "Telegram ↠ Discord", file_path: str | None = None):
