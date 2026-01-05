@@ -9,6 +9,8 @@ if not os.path.exists("my_session.session"):
 import os
 import time
 import logging
+import argostranslate.package
+import argostranslate.translate
 from datetime import datetime
 import requests
 from telethon import TelegramClient, events
@@ -29,33 +31,73 @@ logger = logging.getLogger("relay")
 
 client = TelegramClient(SESSION_FILENAME.replace(".session", ""), API_ID, API_HASH)
 
+logger = logging.getLogger(__name__)
+_ARGOS_READY = False
+
+def _ensure_argos_models():
+    """
+    Install Ukrainian->English and Russian->English models if missing.
+    Downloads from the official Argos package index.
+    """
+    global _ARGOS_READY
+    if _ARGOS_READY:
+        return
+
+    # This pulls the latest list of downloadable models
+    argostranslate.package.update_package_index()
+
+    installed = argostranslate.package.get_installed_packages()
+    installed_pairs = {(p.from_code, p.to_code) for p in installed}
+
+    needed = {("uk", "en"), ("ru", "en")}
+    missing = needed - installed_pairs
+    if not missing:
+        _ARGOS_READY = True
+        logger.info("Argos models already installed: %s", installed_pairs)
+        return
+
+    available = argostranslate.package.get_available_packages()
+
+    for (src, dst) in missing:
+        pkg = next((p for p in available if p.from_code == src and p.to_code == dst), None)
+        if not pkg:
+            logger.warning("No Argos package found for %s->%s", src, dst)
+            continue
+
+        logger.info("Downloading Argos model %s->%s ...", src, dst)
+        pkg_path = argostranslate.package.download_package(pkg)
+
+        logger.info("Installing Argos model %s->%s ...", src, dst)
+        argostranslate.package.install_from_path(pkg_path)
+
+    _ARGOS_READY = True
+
+
 def translate_text(text: str, target_lang: str = "en") -> str:
-    text = text.strip()
+    text = (text or "").strip()
     if not text:
         return text
 
+    # We only support translating to English in this setup
+    if target_lang != "en":
+        return text
+
     try:
-        resp = requests.post(
-            TRANSLATE_URL,
-            json={
-                "q": text,
-                "source": "auto",      # auto-detect source language
-                "target": target_lang,
-                "format": "text",
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        translated = data.get("translatedText")
+        _ensure_argos_models()
 
-        if not translated:
-            logger.warning("Translation API returned no translatedText: %s", data)
-            return text
+        # Argos Translate auto-detect is not built-in like online APIs.
+        # We’ll try ru->en first, then uk->en, and choose the one that changes the text more.
+        ru = argostranslate.translate.translate(text, "ru", "en")
+        uk = argostranslate.translate.translate(text, "uk", "en")
 
-        return translated
+        # Pick whichever looks more "English" (very simple heuristic)
+        # If both fail to change, return original.
+        candidates = [ru, uk]
+        best = max(candidates, key=lambda s: sum(ch.isascii() for ch in s))
+        return best if best and best.strip() else text
+
     except Exception as e:
-        logger.warning("Translation failed, returning original. Error: %s", e)
+        logger.warning("Offline translation failed, sending original. Error: %s", e)
         return text
 
 def post_to_discord(content: str, username: str = "Telegram ↠ Discord", file_path: str | None = None):
