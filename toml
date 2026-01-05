@@ -1,0 +1,8 @@
+app = "telegram-discord-relay"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[processes]
+  app = "python relay.py"
